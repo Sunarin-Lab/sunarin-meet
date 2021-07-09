@@ -12,204 +12,212 @@ let recvTransport;
 const device = new Device();
 const videoConsumers = new Array();
 const audioConsumers = new Array();
-const socket = io("https://192.168.151.1:5000", {
-  secure: true,
+const socket = io("https://10.10.10.15:5000", {
+    secure: true,
 });
 
 socket.on("connect", () => {
-  console.log("Connected");
+    console.log("Connected");
 
-  /**
-   * ------------------------------------------------
-   * AUTOMATICALLY CREATE ROOM ONLY FOR DEVELOPMENT
-   * Should be manual on production
-   * ------------------------------------------------
-   */
-  socket.emit("createMeet", roomId);
+    /**
+     * ------------------------------------------------
+     * AUTOMATICALLY CREATE ROOM ONLY FOR DEVELOPMENT
+     * Should be manual on production
+     * ------------------------------------------------
+     */
+    socket.emit("createMeet", roomId);
 
-  /**
-   * ------------------------------------------------
-   * GET RTP CAPABILITIES
-   * ------------------------------------------------
-   */
-  socket.on("rtp-capabilities", async (rtpCapabilities) => {
-    // FIX: rtpCapabilities from router
-    console.log("Syncing with server");
-    await device.load({
-      routerRtpCapabilities: rtpCapabilities,
+    /**
+     * ------------------------------------------------
+     * GET RTP CAPABILITIES
+     * ------------------------------------------------
+     */
+    socket.on("rtp-capabilities", async (rtpCapabilities) => {
+        // FIX: rtpCapabilities from router
+        console.log("Syncing with server");
+        await device.load({
+            routerRtpCapabilities: rtpCapabilities,
+        });
+
+        socket.emit("synced", roomId);
     });
 
-    socket.emit("synced", roomId);
-  });
-
-  /**
-   * ------------------------------------------------
-   * TRANSPORT OPTION
-   * Creating transport for sending and receiving
-   * ------------------------------------------------
-   */
-  socket.on("transport-options", async (options, recvOptions) => {
-    try {
-      // Getting user's devices
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
-
-      const videoTrack = stream.getVideoTracks()[0];
-      const audioTrack = stream.getAudioTracks()[0];
-      myCamera = document.getElementById("my-camera");
-      myCamera.srcObject = stream;
-
-      // Creating transport
-      sendTransport = device.createSendTransport({
-        id: options.id,
-        iceParameters: options.iceParameters,
-        iceCandidates: options.iceCandidates,
-        dtlsParameters: options.dtlsParameters,
-        sctpParameters: options.sctpParameters,
-        iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
-      });
-
-      recvTransport = device.createRecvTransport({
-        id: recvOptions.id,
-        iceParameters: recvOptions.iceParameters,
-        iceCandidates: recvOptions.iceCandidates,
-        dtlsParameters: recvOptions.dtlsParameters,
-        sctpParameters: recvOptions.sctpParameters,
-        iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
-      });
-
-      /**
-       * ------------------------------------------------
-       * TRANSPORT EVENT
-       * Connect
-       * ------------------------------------------------
-       */
-      recvTransport.on("connect", async ({ dtlsParameters }, callback, errback) => {
-        console.log("transport receive");
+    /**
+     * ------------------------------------------------
+     * TRANSPORT OPTION
+     * Creating transport for sending and receiving
+     * ------------------------------------------------
+     */
+    socket.on("transport-options", async (options, recvOptions) => {
         try {
-          socket.emit("connect-receive", roomId, {
-            transportId: recvTransport.id,
-            dtlsParameters: dtlsParameters,
-          });
+            // Getting user's devices
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: true,
+            });
 
-          callback();
-        } catch (error) {
-          errback("Transport Connect error. " + error);
+            const videoTrack = stream.getVideoTracks()[0];
+            const audioTrack = stream.getAudioTracks()[0];
+            myCamera = document.getElementById("my-camera");
+            myCamera.srcObject = stream;
+
+            // Creating transport
+            sendTransport = device.createSendTransport({
+                id: options.id,
+                iceParameters: options.iceParameters,
+                iceCandidates: options.iceCandidates,
+                dtlsParameters: options.dtlsParameters,
+                sctpParameters: options.sctpParameters,
+                iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+            });
+
+            recvTransport = device.createRecvTransport({
+                id: recvOptions.id,
+                iceParameters: recvOptions.iceParameters,
+                iceCandidates: recvOptions.iceCandidates,
+                dtlsParameters: recvOptions.dtlsParameters,
+                sctpParameters: recvOptions.sctpParameters,
+                iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }],
+            });
+
+            /**
+             * ------------------------------------------------
+             * TRANSPORT EVENT
+             * Connect
+             * ------------------------------------------------
+             */
+            recvTransport.on("connect", async ({ dtlsParameters }, callback, errback) => {
+                console.log("transport receive");
+                try {
+                    socket.emit("connect-receive", roomId, {
+                        transportId: recvTransport.id,
+                        dtlsParameters: dtlsParameters,
+                    });
+
+                    callback();
+                } catch (error) {
+                    errback("Transport Connect error. " + error);
+                }
+            });
+
+            sendTransport.on("connect", async ({ dtlsParameters }, callback, errback) => {
+                console.log("transport connetct");
+                try {
+                    socket.emit("transport-connect", roomId, {
+                        transportId: sendTransport.id,
+                        dtlsParameters: dtlsParameters,
+                    });
+
+                    callback();
+                } catch (error) {
+                    errback("Transport Connect error. " + error);
+                }
+            });
+
+            /**
+             * ------------------------------------------------
+             * TRANSPORT EVENT
+             * Produce
+             * ------------------------------------------------
+             */
+            sendTransport.on("produce", async (parameters, callback, errback) => {
+                try {
+                    let id;
+                    socket.emit(
+                        "transport-produce",
+                        {
+                            roomId: roomId,
+                            producerOption: {
+                                transportId: sendTransport.id,
+                                kind: parameters.kind,
+                                rtpParameters: parameters.rtpParameters,
+                                appData: parameters.appData,
+                            },
+                        },
+                        (data) => {
+                            id = data;
+                            callback({ id });
+                        }
+                    );
+                } catch (error) {
+                    errback("Produce error." + error);
+                }
+            });
+
+            // Create producer
+            const videoProducer = await sendTransport.produce({
+                track: videoTrack,
+                encodings: [{ maxBitrate: 100000 }],
+                codecOptions: {
+                    videoGoogleStartBitrate: 1000,
+                },
+            });
+
+            const audioProducer = await sendTransport.produce({
+                track: audioTrack,
+            });
+
+            // Finally notify the server when transport created and ready to produce
+            socket.emit("transport-created", roomId);
+        } catch (err) {
+            console.log("Error creating transport. ", err);
         }
-      });
-
-      sendTransport.on("connect", async ({ dtlsParameters }, callback, errback) => {
-        console.log("transport connetct");
-        try {
-          socket.emit("transport-connect", roomId, {
-            transportId: sendTransport.id,
-            dtlsParameters: dtlsParameters,
-          });
-
-          callback();
-        } catch (error) {
-          errback("Transport Connect error. " + error);
-        }
-      });
-
-      /**
-       * ------------------------------------------------
-       * TRANSPORT EVENT
-       * Produce
-       * ------------------------------------------------
-       */
-      sendTransport.on("produce", async (parameters, callback, errback) => {
-        try {
-          let id;
-          socket.emit(
-            "transport-produce",
-            {
-              roomId: roomId,
-              producerOption: {
-                transportId: sendTransport.id,
-                kind: parameters.kind,
-                rtpParameters: parameters.rtpParameters,
-                appData: parameters.appData,
-              },
-            },
-            (data) => {
-              console.log("Executing callack");
-              id = data;
-              callback({ id });
-            }
-          );
-        } catch (error) {
-          errback("Produce error." + error);
-        }
-      });
-
-      // Create producer
-      const videoProducer = await sendTransport.produce({
-        track: videoTrack,
-        encodings: [{ maxBitrate: 100000 }],
-        codecOptions: {
-          videoGoogleStartBitrate: 1000,
-        },
-      });
-
-      const audioProducer = await sendTransport.produce({
-        track: audioTrack,
-      });
-
-      // Finally notify the server when transport created and ready to produce
-      socket.emit("transport-created", roomId);
-    } catch (err) {
-      console.log("Error creating transport. ", err);
-    }
-  });
-
-  /**
-   * ------------------------------------------------
-   * TRANSPORT EVENT
-   * Produce
-   * ------------------------------------------------
-   */
-  socket.on("new-consumer", async (data) => {
-    console.log(data);
-
-    const consumer = await recvTransport.consume({
-      id: data.id,
-      producerId: data.producerId,
-      kind: data.kind,
-      rtpParameters: data.rtpParameters,
     });
-    const { track } = consumer;
-    // Store consumer to global array
 
-    const remoteContainer = document.getElementById("remote-container");
-    const mediaStream = new MediaStream([track]);
+    /**
+     * ------------------------------------------------
+     * TRANSPORT EVENT
+     * Produce
+     * ------------------------------------------------
+     */
+    socket.on("new-consumer", async (data) => {
+        const consumer = await recvTransport.consume({
+            id: data.id,
+            producerId: data.producerId,
+            kind: data.kind,
+            rtpParameters: data.rtpParameters,
+        });
+        const { track } = consumer;
 
-    if (data.kind === "video") {
-      // Creating new video elemnent
-      const remoteVideo = document.createElement("video");
-      remoteVideo.controls = false;
-      remoteVideo.autoplay = true;
-      remoteVideo.muted = false;
-      remoteVideo.srcObject = mediaStream;
-      remoteVideo.setAttribute("class", "remote-video");
-      remoteVideo.setAttribute("id", data.userId);
+        if (data.kind === "video") {
+            videoConsumers.push(consumer);
+        } else if (data.kind === "audio" && data.userId !== socket.id) {
+            audioConsumers.push(consumer);
+        }
 
-      videoConsumers.push(consumer);
-      remoteContainer?.appendChild(remoteVideo);
-    } else if (data.kind === "audio" && data.userId !== socket.id) {
-      // Adding remote stream
-      const remoteAudio = document.createElement("audio");
-      remoteAudio.srcObject = mediaStream;
-      remoteAudio.autoplay = true;
+        addMediaElement(consumer, track, data.userId);
+        socket.emit("consumer-done", roomId, consumer.id);
+    });
 
-      audioConsumers.push(consumer);
-      remoteContainer?.appendChild(remoteAudio);
-    }
-    socket.emit("consumer-done", roomId, consumer.id);
-  });
+    socket.on("new-user", async (data) => {
+        socket.emit("consume-new-user", { userId: data.userId, producerId: data.producerId });
+    });
 });
+
+function addMediaElement(consumer, track, userId) {
+    const mediaStream = new MediaStream([track]);
+    const remoteContainer = document.getElementById("remote-container");
+
+    if (consumer.kind === "video") {
+        // Creating new video elemnent
+        const remoteVideo = document.createElement("video");
+        remoteVideo.controls = false;
+        remoteVideo.autoplay = true;
+        remoteVideo.muted = false;
+        remoteVideo.srcObject = mediaStream;
+        remoteVideo.setAttribute("class", "remote-video");
+        remoteVideo.setAttribute("id", userId);
+
+        remoteContainer?.appendChild(remoteVideo);
+    } else if (consumer.kind === "audio" && userId !== socket.id) {
+        // Adding remote stream
+        const remoteAudio = document.createElement("audio");
+        remoteAudio.srcObject = mediaStream;
+        remoteAudio.autoplay = true;
+
+        remoteContainer?.appendChild(remoteAudio);
+    }
+}
 
 /**
  * ------------------------------------------------
@@ -218,31 +226,31 @@ socket.on("connect", () => {
  * ------------------------------------------------
  */
 function joinMeeting() {
-  console.log("Joining room ", roomId);
-  socket.emit("joinMeet", roomId);
+    console.log("Joining room ", roomId);
+    socket.emit("joinMeet", roomId);
 }
 
 async function startRecording() {
-  console.log("start Recording", roomId);
+    console.log("start Recording", roomId);
 
-  socket.emit("start-record", roomId);
+    socket.emit("start-record", roomId);
 }
 
 function App() {
-  return (
-    <div className="App">
-      <header className="App-header">
-        <h1>Current room: {roomId} </h1>
-        <button onClick={joinMeeting}>Send Message</button>
-        <button onClick={startRecording}>Record</button>
-      </header>
-      <div className="container">
-        <div id="remote-container"></div>
-        <video id="record" autoPlay muted controls={false}></video>
-        <video id="my-camera" autoPlay muted controls={false}></video>
-      </div>
-    </div>
-  );
+    return (
+        <div className="App">
+            <header className="App-header">
+                <h1>Current room: {roomId} </h1>
+                <button onClick={joinMeeting}>Send Message</button>
+                <button onClick={startRecording}>Record</button>
+            </header>
+            <div className="container">
+                <div id="remote-container"></div>
+                <video id="record" autoPlay muted controls={false}></video>
+                <video id="my-camera" autoPlay muted controls={false}></video>
+            </div>
+        </div>
+    );
 }
 
 export default App;

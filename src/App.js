@@ -1,4 +1,4 @@
-import { io } from "socket.io-client";
+import { io, Socket } from "socket.io-client";
 import { Device } from "mediasoup-client";
 import "./App.css";
 
@@ -12,7 +12,7 @@ let recvTransport;
 const device = new Device();
 const videoConsumers = new Array();
 const audioConsumers = new Array();
-const socket = io("https://10.10.10.15:5000", {
+const socket = io("https://10.10.10.12:5000", {
     secure: true,
 });
 
@@ -170,6 +170,12 @@ socket.on("connect", () => {
      * Produce
      * ------------------------------------------------
      */
+    socket.on("user-leave", (data) => {
+        var peerElement = document.getElementById(data.userId);
+        console.log("removing peer, ", peerElement);
+        peerElement.remove();
+    });
+
     socket.on("new-consumer", async (data) => {
         const consumer = await recvTransport.consume({
             id: data.id,
@@ -189,7 +195,7 @@ socket.on("connect", () => {
         socket.emit("consumer-done", roomId, consumer.id);
     });
 
-    socket.on("new-user", async (data) => {
+    socket.on("new-user-producer", async (data) => {
         socket.emit("consume-new-user", { userId: data.userId, producerId: data.producerId });
     });
 });
@@ -212,11 +218,17 @@ function addMediaElement(consumer, track, userId) {
     } else if (consumer.kind === "audio" && userId !== socket.id) {
         // Adding remote stream
         const remoteAudio = document.createElement("audio");
+        remoteAudio.setAttribute("id", userId);
         remoteAudio.srcObject = mediaStream;
         remoteAudio.autoplay = true;
 
         remoteContainer?.appendChild(remoteAudio);
     }
+
+    socket.on("disconnect", () => {
+        socket.emit("exit-room", socket.id);
+        console.log("Leaving Room");
+    });
 }
 
 /**
@@ -225,6 +237,12 @@ function addMediaElement(consumer, track, userId) {
  * Fungsi yang digunakan untuk handle button
  * ------------------------------------------------
  */
+// window.onbeforeunload = () => {
+// console.log("Leaving Room");
+// socket.emit("exit-room", socket.id);
+// alert("leaving ROom");
+// };
+
 function joinMeeting() {
     console.log("Joining room ", roomId);
     socket.emit("joinMeet", roomId);

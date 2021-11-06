@@ -1,0 +1,17 @@
+#+TITLE: Sunarin-Meet Client
+#+options: toc:nil
+
+* Change server ip in /src/App.js
+#+begin_src js
+const socket = io("https://yourserver", { secure: true });
+#+end_src
+
+* Start server
+#+begin_src sh
+npm start 
+#+end_src
+
+* Open in browser
+[[http://localhost:3000/?room=333&name=myName][http://localhost:3000/?room=333&name=myName]]
+
+

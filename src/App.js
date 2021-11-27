@@ -12,9 +12,10 @@ const myName = urlArgs.get("name");
 
 // Global variables
 const device = new Device();
-const socket = io("https://10.10.10.15:5000", { secure: true });
+const socket = io("https://sfu.server:5000", { secure: true });
 let videoTrack, audioTrack;
 let sendTransport, recvTransport;
+let videoProducer, audioProducer;
 
 /**
  * ------------------------------------------------
@@ -23,21 +24,31 @@ let sendTransport, recvTransport;
  * ------------------------------------------------
  */
 async function getUserVideo() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: {
-      height: { ideal: 360, max: 720 },
-    },
-  });
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        height: { ideal: 360, max: 720 },
+      },
+    });
 
-  return stream.getVideoTracks()[0];
+    return stream.getVideoTracks()[0];
+  } catch (err) {
+    console.log("error getting video ", err);
+    return null;
+  }
 }
 
 async function getUserAudio() {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: true,
-  });
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: true,
+    });
 
-  return stream.getAudioTracks()[0];
+    return stream.getAudioTracks()[0];
+  } catch (err) {
+    console.log("error getting audio ", err);
+    return null;
+  }
 }
 
 /**
@@ -48,9 +59,26 @@ async function getUserAudio() {
 function App() {
   const [users, setUsers] = useState([]);
   const [isJoined, setJoined] = useState(false);
+  const [isVideoOn, setIsVideoOn] = useState(true);
+  const [isAudioOn, setIsAudioOn] = useState(true);
+
+  const joinMeeting = async function () {
+    console.log(isJoined);
+
+    if (!isJoined) {
+      videoTrack = await getUserVideo();
+      audioTrack = await getUserAudio();
+
+      console.log("Joining room ", roomId);
+      if (myName != "bot") {
+        addUser(myName, socket.id);
+      }
+      socket.emit("joinMeet", roomId, myName);
+      setJoined(true);
+    }
+  };
 
   useEffect(() => {
-
     socket.on("connect", () => {
       console.log("Connected");
 
@@ -64,10 +92,13 @@ function App() {
       socket.emit("get-rtp-capabilities", roomId);
 
       socket.on("new-user-joined", async (user) => {
-        setUsers(users => [...users, { socketId: user.socketId, name: user.name }]);
+        if (user.name != "bot") {
+          setUsers((users) => [...users, { socketId: user.socketId, name: user.name }]);
 
-        console.log("new user joined ", user.name);
+          console.log("new user joined ", user.name);
+        }
       });
+
       /**
        * ------------------------------------------------
        * GET RTP CAPABILITIES
@@ -81,8 +112,8 @@ function App() {
       });
 
       socket.on("peers-in-room", (roomUsers) => {
-        roomUsers.forEach(user => {
-          setUsers(users => [...users, { socketId: user[0], name: user[1] }]);
+        roomUsers.forEach((user) => {
+          setUsers((users) => [...users, { socketId: user[0], name: user[1] }]);
         });
       });
 
@@ -94,11 +125,9 @@ function App() {
        */
       socket.on("error", (error) => {
         console.log(error);
-      })
+      });
 
       socket.on("transport-options", async (options) => {
-        console.log("transport created")
-
         try {
           const sendOptions = options.send;
           const recvOptions = options.recv;
@@ -129,7 +158,7 @@ function App() {
            */
           recvTransport.on("connect", async ({ dtlsParameters }, callback, errback) => {
             try {
-              console.log("connecting");
+              console.log("recv transport created");
               socket.emit("transport-connect", "recv", dtlsParameters);
 
               callback();
@@ -176,22 +205,33 @@ function App() {
             }
           });
 
-          // Create producer
-          await sendTransport.produce({
-            track: videoTrack,
-            encodings: [{ maxBitrate: 100000 }],
-            codecOptions: {
-              videoGoogleStartBitrate: 1000,
-            },
-          });
+          if (videoTrack != undefined) {
+            // Create producer
+            videoProducer = await sendTransport.produce({
+              track: videoTrack,
+              encodings: [{ maxBitrate: 100000 }],
+              codecOptions: {
+                videoGoogleStartBitrate: 1000,
+              },
+            });
 
-          await sendTransport.produce({
-            track: audioTrack,
-          });
+            if (!isVideoOn) {
+              videoProducer.pause();
+            }
+          }
 
+          if (audioTrack != undefined) {
+            audioProducer = await sendTransport.produce({
+              track: audioTrack,
+            });
+
+            if (!isAudioOn) {
+              audioProducer.pause();
+            }
+          }
 
           // Finally notify the server when transport created and ready to produce
-          //socket.emit("transport-created", roomId); // Old implementation
+          socket.emit("transport-created");
         } catch (err) {
           console.log("Error creating transport. ", err);
         }
@@ -211,7 +251,6 @@ function App() {
           rtpParameters: data.rtpParameters,
         });
         const { track } = consumer;
-        // console.log(data);
 
         if (data.kind === "video") {
           const video = document.getElementById(data.peerName + data.socketId + "-video");
@@ -220,8 +259,6 @@ function App() {
         } else if (data.kind === "audio" && data.socketId !== socket.id) {
           const audio = document.getElementById(data.peerName + data.socketId + "-audio");
           audio.srcObject = new MediaStream([track]);
-
-          //audioConsumers.push(consumer);
         }
 
         socket.emit("consumer-done", consumer.id);
@@ -238,14 +275,33 @@ function App() {
         peerElement.remove();
       });
     });
+
+    joinMeeting(); // This will tell server if client is ready
+
     window.addEventListener("beforeunload", (e) => {
       socket.disconnect();
     });
-  }, [])
+  }, []); // COMPONENT INIT
 
   useEffect(() => {
     console.log(users);
-  }, [users])
+  }, [users]);
+
+  useEffect(() => {
+    console.log(isAudioOn);
+
+    if (audioProducer) {
+      isAudioOn ? audioProducer.resume() : audioProducer.pause();
+    }
+  }, [isAudioOn]);
+
+  useEffect(() => {
+    console.log(isVideoOn);
+
+    if (videoProducer) {
+      isVideoOn ? videoProducer.resume() : videoProducer.pause();
+    }
+  }, [isVideoOn]);
 
   const addUser = (user, socketId) => {
     setUsers([
@@ -257,27 +313,15 @@ function App() {
     ]);
   };
 
-  const joinMeeting = async function () {
-    console.log(isJoined);
-
-    if (!isJoined) {
-      videoTrack = await getUserVideo();
-      audioTrack = await getUserAudio();
-
-      console.log("Joining room ", roomId);
-      addUser(myName, socket.id);
-      socket.emit("joinMeet", roomId, myName);
-      setJoined(true);
-    }
+  const audioToggle = function () {
+    setIsAudioOn(!isAudioOn);
+  };
+  const videoToggle = function () {
+    setIsVideoOn(!isVideoOn);
   };
 
   const startRecording = function () {
     addUser(myName, socket.id);
-    // const mediaStream = await getUserVideo();
-    //const peerVideo
-
-    // const video = document.getElementById(name + "-video");
-    // video.srcObject = new MediaStream([mediaStream]);
   };
 
   return (
@@ -295,10 +339,10 @@ function App() {
             <div id="bottomBar">
               <ul className="bottom-bar-menu">
                 <li>
-                  <button onClick={joinMeeting}>Audio Toggle</button>
+                  <button onClick={audioToggle}>Audio Toggle</button>
                 </li>
                 <li>
-                  <button>Video Toggle</button>
+                  <button onClick={videoToggle}>Video Toggle</button>
                 </li>
                 <li>
                   <button onClick={startRecording}>Recording</button>

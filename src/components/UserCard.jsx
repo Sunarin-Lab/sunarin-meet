@@ -18,8 +18,12 @@ const videoStyle = {
   width: "100%",
   height: "auto",
   backgroundSize: "cover",
-  overflow: "hidden"
-}
+  overflow: "hidden",
+};
+
+const audioStyle = {
+  display: "none",
+};
 
 class UserCard extends Component {
   constructor(props) {
@@ -42,7 +46,7 @@ class UserCard extends Component {
     return (
       <div className="col-md-3 user-card" style={userCardStyle} id={this.props.socketId + this.props.username}>
         <video id={this.props.username + this.props.socketId + "-video"} style={videoStyle} autoPlay muted />
-        <audio id={this.props.username + this.props.socketId + "-audio"} autoPlay />
+        <audio id={this.props.username + this.props.socketId + "-audio"} style={audioStyle} autoPlay controls />
         <span>{this.props.username}</span>
       </div>
     );
